@@ -212,11 +212,22 @@ function card(it) {
     class: 'btn btn-ink', type: 'button',
     onclick: (e) => busy(e.currentTarget, 'Отправляю…', async () => { await cmd('send', { id: it.id, text: ta.value }); toast('Ответ опубликован'); }),
   }, it.status === 'error' ? 'Отправить снова' : 'Отправить');
+  const skipBtn = (cls) => h('button', { class: cls, type: 'button', onclick: (e) => busy(e.currentTarget, '…', () => cmd('skip', { id: it.id })) }, 'Пропустить');
+  // модель советует не отвечать и черновика нет: главное действие — пропустить
+  if (it.suggestSkip && !it.draft && it.status === 'ready') {
+    el.append(h('div', { class: 'actions' },
+      skipBtn('btn btn-ink'),
+      h('button', {
+        class: 'btn', type: 'button',
+        onclick: (e) => busy(e.currentTarget, 'Пишу…', () => cmd('draft', { id: it.id, hint: 'всё равно ответь коротко и вежливо' })),
+      }, 'Всё равно ответить')));
+    return el;
+  }
   const actions = h('div', { class: 'actions' },
     it.status === 'sending' ? h('button', { class: 'btn btn-ink', disabled: true, type: 'button' }, 'Отправляю…') : sendBtn,
     h('button', { class: 'btn', type: 'button', onclick: () => { hintRow.hidden = !hintRow.hidden; if (!hintRow.hidden) hintInput.focus(); } }, 'Переписать'),
     h('span', { class: 'spacer' }),
-    h('button', { class: 'btn btn-ghost', type: 'button', onclick: (e) => busy(e.currentTarget, '…', () => cmd('skip', { id: it.id })) }, 'Пропустить'));
+    skipBtn('btn btn-ghost'));
   el.append(actions, hintRow);
   return el;
 }

@@ -112,11 +112,11 @@ async function renderHeader() {
   for (const b of mode.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.mode === s.mode));
   const sch = s.schedule;
   const notes = {
-    off: '',
-    drafts: `Каждые ${sch.intervalMin} мин ищу новые комментарии и пишу черновики. Отправляете вы.`,
-    auto: `<strong>Ответы уходят без проверки</strong> — по одному, с паузой ${sch.delayMin}–${sch.delayMax} с, не больше ${sch.dailyLimit} в день на канал.`,
+    off: [],
+    drafts: [`Каждые ${sch.intervalMin} мин ищу новые комментарии и пишу черновики. Отправляете вы.`],
+    auto: [h('strong', {}, 'Ответы уходят без проверки'), ` — по одному, с паузой ${sch.delayMin}–${sch.delayMax} с, не больше ${sch.dailyLimit} в день на канал. Ответы со ссылками и упоминаниями ждут вас.`],
   };
-  $('#mode-note').innerHTML = notes[s.mode];
+  $('#mode-note').replaceChildren(...notes[s.mode]);
 
   const on = enabledChannels();
   $('#account-name').textContent = on.length === 1 ? (on[0].handle || on[0].title)
@@ -226,6 +226,7 @@ function card(it) {
   el.append(reply);
 
   if (it.suggestSkip) el.append(h('div', { class: 'note' }, `Модель советует пропустить: ${it.reason}`));
+  if (it.review && it.status === 'ready') el.append(h('div', { class: 'note' }, `Проверьте перед отправкой: ${it.review}${S.settings.mode === 'auto' ? '. Сам такой ответ не отправлю' : ''}`));
   if (it.status === 'error') el.append(h('div', { class: 'note note-error' }, it.error || 'Что-то пошло не так'));
   if (it.status === 'scheduled') {
     el.append(h('div', { class: 'note note-sched' }, h('span', { class: 'led on' }), `Отправлю в ${hhmm(it.sendAt)}`));
@@ -261,7 +262,7 @@ function card(it) {
 }
 
 // Подпись элемента: карточка перерисовывается, только если что-то поменялось (и в ней не печатают)
-const sig = (it) => JSON.stringify([it.status, it.error, it.sendAt, it.suggestSkip, it.status === 'ready' ? '' : it.draft, S.settings.voice.maxChars]);
+const sig = (it) => JSON.stringify([it.status, it.error, it.sendAt, it.suggestSkip, it.review, it.status === 'ready' ? '' : it.draft, S.settings.voice.maxChars, S.settings.mode]);
 
 function patchQueue() {
   const box = $('#cards');
@@ -449,29 +450,38 @@ function renderModel() {
   const keyLink = h('a', { target: '_blank' });
   const keyLabel = h('span', {}, 'API-ключ');
   const localHint = h('small', {});
-  const bridgeStatus = h('div', { class: 'note', hidden: true });
+  const bridgeStatus = h('div', { class: 'note', style: 'margin:0 0 14px', hidden: true });
   const viaRow = h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: ai.viaBridge, onchange: (e) => { ai.viaBridge = e.target.checked; syncProvider(); } }),
     h('span', {},
       h('b', {}, 'Через мост TubeComment'),
       h('small', {}, 'Запросы к провайдеру идут через мост на этом компьютере и дальше через его прокси (HTTP или SOCKS5). Нужно, если API провайдера недоступен напрямую.')));
+  let tokenTimer;
+  const tokenInput = h('input', {
+    class: 'input', type: 'password', value: ai.bridgeToken, autocomplete: 'off', spellcheck: 'false', placeholder: 'из окна моста',
+    oninput: (e) => { ai.bridgeToken = e.target.value.trim(); clearTimeout(tokenTimer); tokenTimer = setTimeout(checkBridge, 400); },
+  });
+  const tokenField = field('Токен моста', tokenInput, 'Мост показывает его при запуске. Нужен один раз: без токена мостом не сможет пользоваться другая программа на компьютере.');
   let pingSeq = 0;
   const checkBridge = async () => {
     const usesBridge = p().bridge || ai.viaBridge;
     bridgeStatus.hidden = !usesBridge;
+    tokenField.hidden = !usesBridge;
     if (!usesBridge) return;
     const seq = ++pingSeq;
     bridgeStatus.className = 'note';
     bridgeStatus.textContent = 'Проверяю мост…';
     try {
-      const r = await cmd('bridgePing');
+      const r = await cmd('bridgePing', { token: ai.bridgeToken });
       if (seq !== pingSeq) return;
       const clis = (r.clis || []).map((c) => c.id).join(', ');
       bridgeStatus.textContent = `Мост ${r.version} работает · CLI: ${clis || 'не найдены'} · прокси: ${r.proxy || 'нет'}`;
-    } catch {
+    } catch (e) {
       if (seq !== pingSeq) return;
       bridgeStatus.className = 'note note-error';
-      bridgeStatus.textContent = 'Мост не запущен. Откройте папку расширения и запустите bridge/start-bridge.bat (macOS/Linux: node bridge/tubecomment-bridge.mjs).';
+      bridgeStatus.textContent = e.code === 'BAD_TOKEN'
+        ? 'Мост работает, но токен не подходит. Скопируйте его из окна моста (или: node bridge/tubecomment-bridge.mjs --show-token).'
+        : 'Мост не запущен. Откройте папку расширения и запустите bridge/start-bridge.bat (macOS/Linux: node bridge/tubecomment-bridge.mjs).';
     }
   };
   const formatSelect = h('select', { class: 'select', onchange: (e) => { ai.format = e.target.value; } },
@@ -525,6 +535,7 @@ function renderModel() {
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: (e) => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.currentTarget.textContent = keyInput.type === 'password' ? 'Показать' : 'Скрыть'; } }, 'Показать')),
       h('small', {}, localHint, ' ', keyLink)),
     viaRow,
+    tokenField,
     bridgeStatus,
     h('label', { class: 'field' }, h('span', {}, 'Модель'),
       h('div', { class: 'row' }, modelInput, list,

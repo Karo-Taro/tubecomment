@@ -9,22 +9,30 @@ async function syncAlarms() {
   const s = await store.getSettings();
   await chrome.alarms.clearAll();
   if (s.mode !== 'off') chrome.alarms.create('check', { periodInMinutes: Math.max(5, +s.schedule.intervalMin || 15), delayInMinutes: 1 });
-  if (s.mode === 'auto') chrome.alarms.create('tick', { periodInMinutes: 1 });
+  if (s.mode === 'auto') chrome.alarms.create('tick', { periodInMinutes: 0.5 });
 }
 
-// Если браузер закрылся посреди работы — возвращаем «зависшие» элементы
+// Свежий запуск service worker: всё, что «шло» в прошлом экземпляре, уже прервано.
+// Прерванную отправку не возвращаем в «готово»: ответ мог уйти — пусть человек проверит.
 async function recover() {
   const q = await store.getQueue();
-  const stuck = Object.values(q).filter((i) => i.status === 'drafting' || i.status === 'sending');
-  if (stuck.length) await store.putItems(stuck.map((i) => ({ id: i.id, status: i.draft ? 'ready' : 'error', error: i.draft ? '' : 'Черновик не дописан — нажмите «Переписать»' })));
+  const stuck = Object.values(q).filter((i) => ['new', 'drafting', 'sending'].includes(i.status));
+  if (stuck.length) {
+    await store.putItems(stuck.map((i) => (i.status === 'sending'
+      ? { id: i.id, status: 'error', error: 'Отправка прервалась. Откройте комментарий на YouTube и проверьте, ушёл ли ответ, прежде чем отправлять снова' }
+      : { id: i.id, status: 'error', error: 'Черновик не дописан — нажмите «Переписать»' })));
+  }
   await store.setStatus({ checking: false });
   await engine.refreshBadge();
 }
 
-chrome.runtime.onInstalled.addListener(() => { syncAlarms(); recover(); });
-chrome.runtime.onStartup.addListener(() => { syncAlarms(); recover(); });
+// Команды и будильники ждут восстановления, чтобы не гоняться с ним
+const recovered = recover().catch(() => {});
+chrome.runtime.onInstalled.addListener(() => syncAlarms());
+chrome.runtime.onStartup.addListener(() => syncAlarms());
 
-chrome.alarms.onAlarm.addListener((a) => {
+chrome.alarms.onAlarm.addListener(async (a) => {
+  await recovered;
   if (a.name === 'check') engine.check().catch(() => {});
   if (a.name === 'tick') engine.tick().catch(() => {});
 });
@@ -79,31 +87,37 @@ const handlers = {
   async listModels({ cfg }) {
     return listModels(cfg);
   },
-  async bridgePing() {
-    return bridgePing();
+  async bridgePing({ token }) {
+    const s = await store.getSettings();
+    return bridgePing({ ...s.ai, bridgeToken: token ?? s.ai.bridgeToken });
   },
   async discoverChannels() {
     return engine.discoverChannels();
   },
   // включить/выключить канал, задать ему голос
   async updateChannel({ id, patch }) {
-    const s = await store.getSettings();
     const allowed = ['enabled', 'persona', 'examples', 'signature'];
     const clean = Object.fromEntries(Object.entries(patch || {}).filter(([k]) => allowed.includes(k)));
-    return store.saveSettings({ channels: s.channels.map((c) => (c.id === id ? { ...c, ...clean } : c)) });
+    return store.updateSettings((s) => ({ channels: s.channels.map((c) => (c.id === id ? { ...c, ...clean } : c)) }));
   },
   async clearLog() {
-    await chrome.storage.local.set({ log: [] });
+    await store.resetKeys({ log: [] });
   },
   async clearQueue() {
-    await chrome.storage.local.set({ queue: {} });
+    await store.resetKeys({ queue: {} });
     await engine.refreshBadge();
   },
 };
 
-chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+// Со страниц YouTube (контент-скрипт) разрешена только кнопка ✦ AI; остальное — из панели расширения
+const FROM_PAGES = new Set(['compose']);
+
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const h = handlers[msg?.type];
-  if (!h) return false;
-  h(msg).then((data) => reply({ ok: true, data }), (e) => reply({ ok: false, error: e.message, code: e.code }));
+  if (!h || sender.id !== chrome.runtime.id) return false;
+  // панель может быть открыта и во вкладке, поэтому различаем по адресу: страница расширения или сайт
+  const fromSite = !String(sender.url || '').startsWith(chrome.runtime.getURL(''));
+  if (fromSite && !FROM_PAGES.has(msg.type)) return false;
+  recovered.then(() => h(msg)).then((data) => reply({ ok: true, data }), (e) => reply({ ok: false, error: e.message, code: e.code }));
   return true;
 });

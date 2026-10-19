@@ -8,7 +8,7 @@
   <!--
     Превью боковой панели без установки расширения: chrome.* подменён заглушкой с примерами данных.
     Запуск: из корня репозитория `npx serve .` (или `python -m http.server`), затем откройте /dev/preview.html.
-    ?empty — пустое состояние с онбордингом, ?theme=dark|light — принудительная тема.
+    ?empty — пустое состояние с онбордингом, ?bridge — модель через мост, ?theme=dark|light — принудительная тема.
   -->
 </head>
 <body>
@@ -21,12 +21,19 @@
   document.body.innerHTML = doc.body.innerHTML;
 
   const now = Date.now();
-  const ava = (n) => `https://i.pravatar.cc/64?img=${n}`;
+  // аватары-заглушки: буква на цветном круге (без фото реальных людей)
+  const ava = (n) => {
+    const letter = 'АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯ'[n % 27];
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="hsl(${(n * 47) % 360} 45% 55%)"/><text x="32" y="42" font-family="sans-serif" font-size="28" font-weight="600" fill="#fff" text-anchor="middle">${letter}</text></svg>`;
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  };
   const empty = params.has('empty');
   const db = {
     settings: {
       mode: empty ? 'off' : 'drafts',
-      ai: { preset: 'anthropic', format: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', apiKey: empty ? '' : 'sk-ant-demo', model: 'claude-haiku-5-5', temperature: 0.7 },
+      ai: params.has('bridge')
+        ? { preset: 'bridge', format: 'openai', baseUrl: 'http://127.0.0.1:47331/v1', apiKey: '', model: 'claude:sonnet', temperature: 0.7, bridgeToken: 'demo-token-1234567890' }
+        : { preset: 'anthropic', format: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', apiKey: empty ? '' : 'sk-ant-demo', model: 'claude-haiku-5-5', temperature: 0.7 },
       channels: empty ? [] : [
         { id: 'UC1', handle: '@artem_builds', title: 'Артём Собирает', avatar: ava(12), authUser: 0, pageId: '', enabled: true, persona: 'Сборка ПК и железо' },
         { id: 'UC2', handle: '@artem_shorts', title: 'Артём | Shorts', avatar: ava(15), authUser: 0, pageId: '1012', enabled: true },
@@ -34,8 +41,8 @@
       ],
       voice: { persona: empty ? '' : 'Канал про сборку ПК', tone: ['friendly', 'casual'] },
     },
-    status: { lastCheck: now - 4 * 60000, filtered: 6 },
-    stats: { date: new Date().toLocaleDateString('sv'), sent: 7, byChannel: { UC1: 5, UC2: 2 } },
+    status: empty ? {} : { lastCheck: now - 4 * 60000, filtered: 6 },
+    stats: empty ? { date: new Date().toLocaleDateString('sv'), sent: 0, byChannel: {} } : { date: new Date().toLocaleDateString('sv'), sent: 7, byChannel: { UC1: 5, UC2: 2 } },
     queue: empty ? {} : {
       a: { id: 'a', channelId: 'UC1', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@dimon_tech', avatar: ava(3), text: 'А какой блок питания брал? Хватит его под апгрейд видеокарты на 5070?', published: '12 minutes ago', likes: 14, status: 'ready', draft: 'Брал Deepcool PK650D — под 5070 хватит с запасом 👍 Если планируешь 5080, лучше сразу смотреть на 750 Вт.', createdAt: now },
       b: { id: 'b', channelId: 'UC1', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@katya.m', avatar: ava(5), text: 'Спасибо, по твоему видео собрала первый комп в жизни, всё завелось с первого раза!!', published: '1 hour ago', likes: 52, status: 'drafting', createdAt: now - 1 },
@@ -59,6 +66,7 @@
       sendMessage: async (m) => {
         await new Promise((r) => setTimeout(r, 500));
         if (m.type === 'testModel') return { ok: true, data: 'Брал Deepcool PK650D, под апгрейд до 5070 хватит 👍' };
+        if (m.type === 'bridgePing') return { ok: true, data: { version: '0.3.0', clis: [{ id: 'claude' }, { id: 'ollama/llama3.1' }], proxy: 'socks5://user:***@proxy:1080' } };
         if (m.type === 'discoverChannels') return { ok: true, data: db.settings.channels };
         if (m.type === 'check') return { ok: true, data: { found: 0 } };
         if (m.type === 'listModels') return { ok: true, data: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] };

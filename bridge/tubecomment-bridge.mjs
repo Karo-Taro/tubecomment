@@ -20,8 +20,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const EXTENSION_ID = 'bdeekghlhecipdlkflmepindpmdnlkjj'; // закреплён ключом в manifest.json
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_PROMPT = 200_000;
@@ -30,9 +31,11 @@ const MAX_PARALLEL_CLI = 2;
 const isWin = process.platform === 'win32';
 
 // ---------------------------------------------------------------- настройки
-// Файл настроек (необязательный): %LOCALAPPDATA%\TubeComment\bridge.json или ~/.config/tubecomment/bridge.json
-//   { "port": 47331, "proxy": "socks5://user:pass@host:1080", "allowedOrigins": ["chrome-extension://…"],
+// Файл настроек: %LOCALAPPDATA%\TubeComment\bridge.json или ~/.config/tubecomment/bridge.json
+//   { "token": "…", "port": 47331, "proxy": "socks5://user:pass@host:1080",
+//     "allowToolAgents": ["codex", "gemini"], "allowedOrigins": ["chrome-extension://…"],
 //     "cli": { "my-llm": { "cmd": ["llm", "-m", "gpt-4o"] } } }
+// token создаётся при первом запуске; его нужно один раз вставить в расширение (вкладка «Модель»).
 const CONFIG_DIR = isWin
   ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'TubeComment')
   : path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'tubecomment');
@@ -42,6 +45,18 @@ function readConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; }
 }
 const config = readConfig();
+
+// Секретный токен: без него мостом не сможет пользоваться другая программа или другой пользователь компьютера
+if (!config.token) {
+  config.token = randomBytes(18).toString('base64url');
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  } catch (e) {
+    console.error('Не удалось сохранить токен в ' + CONFIG_FILE + ': ' + e.message);
+  }
+}
+const TOKEN = Buffer.from(String(config.token));
 const arg = (name) => {
   const i = process.argv.indexOf(name);
   return i > 0 ? process.argv[i + 1] : undefined;
@@ -54,17 +69,21 @@ const log = (...a) => console.log(new Date().toLocaleTimeString(), ...a);
 const maskProxy = (p) => p.replace(/\/\/([^:@/]+):([^@/]+)@/, '//$1:***@');
 
 // ---------------------------------------------------------------- CLI-агенты
-// Агентам отключены инструменты и дана пустая временная папка: в промпт попадают чужие
-// комментарии, и prompt-injection не должен суметь выполнить команду или прочитать ваши файлы.
+// В промпт попадают чужие комментарии, поэтому prompt-injection не должен суметь выполнить команду
+// или прочитать ваши файлы. Claude Code запускается с полностью отключёнными инструментами и без MCP.
+// У Codex CLI и Gemini CLI так отключить чтение файлов нельзя (песочница read-only всё равно читает
+// диск), поэтому они работают, только если явно разрешить их в bridge.json: "allowToolAgents": ["codex"].
 // Из запроса приходит только имя модели, поэтому произвольную программу через мост не запустить.
 const CLI_PRESETS = {
   claude: { title: 'Claude Code', cmd: (m) => ['claude', '-p', '--output-format', 'text', '--tools', '', '--strict-mcp-config', ...(m ? ['--model', m] : [])] },
-  codex: { title: 'OpenAI Codex CLI', cmd: (m) => ['codex', 'exec', '--skip-git-repo-check', '--sandbox', 'read-only', ...(m ? ['-m', m] : []), '-'] },
-  gemini: { title: 'Gemini CLI', cmd: (m) => ['gemini', ...(m ? ['-m', m] : [])] },
+  codex: { title: 'OpenAI Codex CLI', unsafe: true, cmd: (m) => ['codex', 'exec', '--skip-git-repo-check', '--sandbox', 'read-only', ...(m ? ['-m', m] : []), '-'] },
+  gemini: { title: 'Gemini CLI', unsafe: true, cmd: (m) => ['gemini', ...(m ? ['-m', m] : [])] },
 };
+const toolAgentAllowed = (name) => config.allowToolAgents === true || (Array.isArray(config.allowToolAgents) && config.allowToolAgents.includes(name));
 const SAFE_NAME = /^[A-Za-z0-9][\w.\-/]{0,79}$/;
 
 function which(cmd) {
+  if (path.isAbsolute(cmd)) return fs.existsSync(cmd) ? cmd : null;
   const exts = isWin ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';') : [''];
   for (const dir of (process.env.PATH || '').split(path.delimiter)) {
     for (const ext of exts) {
@@ -77,7 +96,7 @@ function which(cmd) {
 
 function cliCommands() {
   const out = {};
-  for (const [name, p] of Object.entries(CLI_PRESETS)) out[name] = p;
+  for (const [name, p] of Object.entries(CLI_PRESETS)) if (!p.unsafe || toolAgentAllowed(name)) out[name] = p;
   for (const [name, c] of Object.entries(config.cli || {})) {
     if (Array.isArray(c?.cmd) && c.cmd.length) out[name] = { title: c.title || name, cmd: () => c.cmd.map(String), custom: true };
   }
@@ -110,6 +129,9 @@ function resolveCli(model) {
   } else {
     const [base, sub = ''] = model.split(':');
     const c = cliCommands()[base];
+    if (!c && CLI_PRESETS[base]?.unsafe) {
+      throw new Error(`${CLI_PRESETS[base].title} выключен: у него нельзя отключить чтение файлов, и вредный комментарий может заставить его прочитать ваши данные. Включить на свой риск: "allowToolAgents": ["${base}"] в ${CONFIG_FILE}`);
+    }
     if (!c) throw new Error(`Неизвестный CLI «${model}». Доступно: ${cliModels().map((m) => m.id).join(', ') || 'ничего не найдено'}`);
     if (sub && (!SAFE_NAME.test(sub) || c.custom)) throw new Error('Некорректное имя модели после двоеточия');
     argv = c.cmd(sub);
@@ -295,6 +317,10 @@ function allowed(req) {
   if (o && !ALLOWED_ORIGINS.has(o)) return false;
   return req.headers['x-tubecomment'] === '1';
 }
+function tokenOk(req) {
+  const got = Buffer.from(String(req.headers['x-tubecomment-token'] || ''));
+  return got.length === TOKEN.length && timingSafeEqual(got, TOKEN);
+}
 
 function send(res, code, obj, req) {
   const body = JSON.stringify(obj);
@@ -318,12 +344,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       ...cors(req),
       'access-control-allow-methods': 'GET, POST',
-      'access-control-allow-headers': 'content-type, authorization, x-api-key, x-tubecomment, x-tc-target, anthropic-version, anthropic-dangerous-direct-browser-access, http-referer, x-title',
+      'access-control-allow-headers': 'content-type, authorization, x-api-key, x-tubecomment, x-tubecomment-token, x-tc-target, anthropic-version, anthropic-dangerous-direct-browser-access, http-referer, x-title',
       'access-control-allow-private-network': 'true',
     });
     return res.end();
   }
   if (!allowed(req)) return send(res, 403, { error: { message: 'forbidden' } });
+  if (!tokenOk(req)) return send(res, 401, { error: { message: 'Неверный токен моста. Скопируйте его из окна моста во вкладку «Модель» расширения' } }, req);
   try {
     const body = await readBody(req);
     if (req.url.startsWith('/forward/')) return forward(req, res, body);
@@ -373,6 +400,7 @@ function autostart(install) {
 
 if (process.argv.includes('--install-autostart')) autostart(true);
 else if (process.argv.includes('--uninstall-autostart')) autostart(false);
+else if (process.argv.includes('--show-token')) console.log(config.token);
 else {
   server.on('error', (e) => {
     console.error(e.code === 'EADDRINUSE' ? `Порт ${PORT} занят — мост уже запущен или порт занят другой программой.` : e.message);
@@ -384,6 +412,9 @@ else {
     console.log(`  CLI-агенты: ${clis.length ? clis.join(', ') : 'не найдены (установите claude, codex, gemini или ollama)'}`);
     console.log(`  Прокси: ${PROXY ? maskProxy(PROXY) : 'нет (запросы к провайдерам идут напрямую)'}`);
     console.log(`  Настройки: ${CONFIG_FILE}`);
+    console.log('');
+    console.log(`  Токен для расширения (вкладка «Модель» → «Токен моста»):  ${config.token}`);
+    console.log('');
     console.log('  Окно можно свернуть. Остановить — Ctrl+C.');
   });
 }

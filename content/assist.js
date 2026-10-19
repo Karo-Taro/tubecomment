@@ -15,6 +15,8 @@
       author: textOf(comment.querySelector('#author-text')),
       parentText: root && root !== own ? textOf(root) : '',
       videoTitle: textOf(document.querySelector('ytd-watch-metadata h1, h1.ytd-watch-metadata')) || document.title.replace(/ - YouTube$/, ''),
+      // автор видео — чтобы ответить голосом нужного канала, если их несколько
+      channelHandle: decodeURIComponent(/\/(@[^/?]+)/.exec(document.querySelector('ytd-watch-metadata ytd-channel-name a, #owner ytd-channel-name a')?.getAttribute('href') || '')?.[1] || ''),
     };
   }
 

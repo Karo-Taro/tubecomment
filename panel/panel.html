@@ -11,9 +11,9 @@
     <div class="machine-top">
       <span class="led" id="led" aria-hidden="true"></span>
       <span class="brand">TubeComment</span>
-      <button class="account" id="account" type="button" title="Канал, от имени которого идут ответы">
-        <img id="account-avatar" alt="" hidden>
-        <span id="account-name">Канал не подключён</span>
+      <button class="account" id="account" type="button" title="Каналы, от имени которых идут ответы">
+        <span class="avatars" id="account-avatars"></span>
+        <span id="account-name">Каналы не найдены</span>
       </button>
     </div>
 
@@ -47,6 +47,7 @@
 
   <nav class="tabs" role="tablist">
     <button role="tab" data-tab="queue" type="button">Очередь <span class="count" id="tab-count"></span></button>
+    <button role="tab" data-tab="channels" type="button">Каналы</button>
     <button role="tab" data-tab="log" type="button">Журнал</button>
     <button role="tab" data-tab="voice" type="button">Голос</button>
     <button role="tab" data-tab="rules" type="button">Правила</button>

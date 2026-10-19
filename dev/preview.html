@@ -27,19 +27,23 @@
     settings: {
       mode: empty ? 'off' : 'drafts',
       ai: { preset: 'anthropic', format: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', apiKey: empty ? '' : 'sk-ant-demo', model: 'claude-haiku-5-5', temperature: 0.7 },
-      channel: empty ? null : { id: 'UCdemo', handle: '@artem_builds', title: 'Артём Собирает', avatar: ava(12) },
+      channels: empty ? [] : [
+        { id: 'UC1', handle: '@artem_builds', title: 'Артём Собирает', avatar: ava(12), authUser: 0, pageId: '', enabled: true, persona: 'Сборка ПК и железо' },
+        { id: 'UC2', handle: '@artem_shorts', title: 'Артём | Shorts', avatar: ava(15), authUser: 0, pageId: '1012', enabled: true },
+        { id: 'UC3', handle: '@old_vlog', title: 'Старый влог', avatar: ava(33), authUser: 1, pageId: '', enabled: false },
+      ],
       voice: { persona: empty ? '' : 'Канал про сборку ПК', tone: ['friendly', 'casual'] },
     },
     status: { lastCheck: now - 4 * 60000, filtered: 6 },
-    stats: { date: new Date().toLocaleDateString('sv'), sent: 7 },
+    stats: { date: new Date().toLocaleDateString('sv'), sent: 7, byChannel: { UC1: 5, UC2: 2 } },
     queue: empty ? {} : {
-      a: { id: 'a', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@dimon_tech', avatar: ava(3), text: 'А какой блок питания брал? Хватит его под апгрейд видеокарты на 5070?', published: '12 minutes ago', likes: 14, status: 'ready', draft: 'Брал Deepcool PK650D — под 5070 хватит с запасом 👍 Если планируешь 5080, лучше сразу смотреть на 750 Вт.', createdAt: now },
-      b: { id: 'b', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@katya.m', avatar: ava(5), text: 'Спасибо, по твоему видео собрала первый комп в жизни, всё завелось с первого раза!!', published: '1 hour ago', likes: 52, status: 'drafting', createdAt: now - 1 },
-      c: { id: 'c', videoId: 'x2', short: true, videoTitle: 'Термопаста за 100 ₽ vs за 1000 ₽', author: '@crypto_bonus_24', avatar: ava(8), text: 'Заработок от 5000 в день, пиши в лс', published: '2 hours ago', likes: 0, status: 'ready', draft: '', suggestSkip: true, reason: 'реклама и спам', createdAt: now - 2 },
-      d: { id: 'd', videoId: 'x3', videoTitle: 'Почему твой ПК шумит', author: '@serega_1987', avatar: ava(11), text: 'Кулер на проце гудит только под нагрузкой, это нормально?', published: '3 hours ago', likes: 3, status: 'error', draft: 'Под нагрузкой — нормально, кулер раскручивается. Если гул низкий и с вибрацией, проверь, не задевает ли что-то лопасти.', error: 'YouTube ответил 401: войдите в аккаунт на youtube.com', createdAt: now - 3 },
+      a: { id: 'a', channelId: 'UC1', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@dimon_tech', avatar: ava(3), text: 'А какой блок питания брал? Хватит его под апгрейд видеокарты на 5070?', published: '12 minutes ago', likes: 14, status: 'ready', draft: 'Брал Deepcool PK650D — под 5070 хватит с запасом 👍 Если планируешь 5080, лучше сразу смотреть на 750 Вт.', createdAt: now },
+      b: { id: 'b', channelId: 'UC1', videoId: 'x1', videoTitle: 'Собрал ПК за 50 000 ₽ — лучшая сборка 2026?', author: '@katya.m', avatar: ava(5), text: 'Спасибо, по твоему видео собрала первый комп в жизни, всё завелось с первого раза!!', published: '1 hour ago', likes: 52, status: 'drafting', createdAt: now - 1 },
+      c: { id: 'c', channelId: 'UC2', videoId: 'x2', short: true, videoTitle: 'Термопаста за 100 ₽ vs за 1000 ₽', author: '@crypto_bonus_24', avatar: ava(8), text: 'Заработок от 5000 в день, пиши в лс', published: '2 hours ago', likes: 0, status: 'ready', draft: '', suggestSkip: true, reason: 'реклама и спам', createdAt: now - 2 },
+      d: { id: 'd', channelId: 'UC1', videoId: 'x3', videoTitle: 'Почему твой ПК шумит', author: '@serega_1987', avatar: ava(11), text: 'Кулер на проце гудит только под нагрузкой, это нормально?', published: '3 hours ago', likes: 3, status: 'error', draft: 'Под нагрузкой — нормально, кулер раскручивается. Если гул низкий и с вибрацией, проверь, не задевает ли что-то лопасти.', error: 'YouTube ответил 401: войдите в аккаунт на youtube.com', createdAt: now - 3 },
     },
     log: [
-      { id: 'l1', videoId: 'x1', author: '@nikita', text: 'Какую мать брал?', draft: 'B650M от Gigabyte, ссылка на всю сборку в описании 🙂', status: 'sent', doneAt: now - 3600e3 },
+      { id: 'l1', channelId: 'UC1', videoId: 'x1', author: '@nikita', text: 'Какую мать брал?', draft: 'B650M от Gigabyte, ссылка на всю сборку в описании 🙂', status: 'sent', doneAt: now - 3600e3 },
       { id: 'l2', videoId: 'x1', author: '@spam_bot', text: 'Подпишись на мой канал', status: 'skipped', reason: 'реклама канала', doneAt: now - 7200e3 },
     ],
   };
@@ -55,6 +59,7 @@
       sendMessage: async (m) => {
         await new Promise((r) => setTimeout(r, 500));
         if (m.type === 'testModel') return { ok: true, data: 'Брал Deepcool PK650D, под апгрейд до 5070 хватит 👍' };
+        if (m.type === 'discoverChannels') return { ok: true, data: db.settings.channels };
         if (m.type === 'check') return { ok: true, data: { found: 0 } };
         if (m.type === 'listModels') return { ok: true, data: ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] };
         return { ok: true, data: {} };

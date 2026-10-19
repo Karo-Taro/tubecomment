@@ -5,7 +5,7 @@ import { DEFAULTS } from '../lib/storage.js';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
-const S = { settings: null, queue: {}, log: [], stats: { sent: 0 }, status: {}, tab: 'queue', logFilter: 'all' };
+const S = { settings: null, queue: {}, log: [], stats: { sent: 0, byChannel: {} }, status: {}, tab: 'queue', logFilter: 'all', queueFilter: 'all' };
 
 // ---------- утилиты ----------
 function h(tag, attrs = {}, ...kids) {
@@ -56,6 +56,9 @@ const agoRu = (s) => {
   const u = { second: 'с', minute: 'мин', hour: 'ч', day: 'д', week: 'нед', month: 'мес', year: 'г' }[m[2].toLowerCase()];
   return `${m[1]} ${u} назад`;
 };
+const plural = (n, [one, few, many]) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many);
+const channelById = (id) => S.settings.channels.find((c) => c.id === id);
+const enabledChannels = () => S.settings.channels.filter((c) => c.enabled);
 const modelReady = (s) => !!(s.ai.baseUrl && s.ai.model && (s.ai.apiKey || providerById(s.ai.preset).local || s.ai.preset === 'custom'));
 
 // ---------- данные ----------
@@ -65,7 +68,7 @@ async function load() {
   S.queue = d.queue || {};
   S.log = d.log || [];
   const today = new Date().toLocaleDateString('sv');
-  S.stats = d.stats?.date === today ? d.stats : { sent: 0 };
+  S.stats = d.stats?.date === today && d.stats.byChannel ? d.stats : { sent: 0, byChannel: {} };
   S.status = d.status || {};
 }
 
@@ -85,7 +88,7 @@ async function renderHeader() {
   led.className = 'led' + (st.checking ? ' busy' : waiting ? ' on blink' : '');
   $('#lcd-waiting').textContent = pad2(waiting);
   $('#lcd-sent').textContent = pad2(stats.sent);
-  $('#lcd-sent-label').textContent = s.mode === 'auto' ? `отвечено · лимит ${s.schedule.dailyLimit}` : 'отвечено сегодня';
+  $('#lcd-sent-label').textContent = s.mode === 'auto' ? `отвечено · лимит ${s.schedule.dailyLimit} на канал` : 'отвечено сегодня';
   $('#lcd-time').textContent = hhmm(st.lastCheck);
   $('#tab-count').textContent = waiting ? String(waiting) : '';
 
@@ -111,28 +114,50 @@ async function renderHeader() {
   const notes = {
     off: '',
     drafts: `Каждые ${sch.intervalMin} мин ищу новые комментарии и пишу черновики. Отправляете вы.`,
-    auto: `<strong>Ответы уходят без проверки</strong> — по одному, с паузой ${sch.delayMin}–${sch.delayMax} с, не больше ${sch.dailyLimit} в день.`,
+    auto: `<strong>Ответы уходят без проверки</strong> — по одному, с паузой ${sch.delayMin}–${sch.delayMax} с, не больше ${sch.dailyLimit} в день на канал.`,
   };
   $('#mode-note').innerHTML = notes[s.mode];
 
-  const ch = s.channel;
-  $('#account-name').textContent = ch ? (ch.handle || ch.title) : 'Канал не подключён';
-  const img = $('#account-avatar');
-  img.hidden = !ch?.avatar;
-  if (ch?.avatar) img.src = ch.avatar;
+  const on = enabledChannels();
+  $('#account-name').textContent = on.length === 1 ? (on[0].handle || on[0].title)
+    : on.length ? `${on.length} ${plural(on.length, ['канал', 'канала', 'каналов'])}`
+      : s.channels.length ? 'Каналы выключены' : 'Каналы не найдены';
+  $('#account-avatars').replaceChildren(...on.slice(0, 3).filter((c) => c.avatar).map((c) => h('img', { src: c.avatar, alt: '', referrerpolicy: 'no-referrer' })));
   $('#check').disabled = !!st.checking;
 }
 
 // ---------- вкладка «Очередь» ----------
 const ORDER = { error: 0, ready: 1, drafting: 2, new: 2, sending: 3, scheduled: 4 };
 
+// Каналы, у которых есть комментарии в очереди; фильтр показываем, если их больше одного
+const queueChannels = () => [...new Set(Object.values(S.queue).map((i) => i.channelId))];
+const visibleItems = () => Object.values(S.queue)
+  .filter((i) => S.queueFilter === 'all' || i.channelId === S.queueFilter)
+  .sort((a, b) => (ORDER[a.status] ?? 5) - (ORDER[b.status] ?? 5) || (a.sendAt || 0) - (b.sendAt || 0) || b.createdAt - a.createdAt);
+
+function queueFilter() {
+  const ids = queueChannels();
+  if (ids.length < 2) { S.queueFilter = 'all'; return null; }
+  if (S.queueFilter !== 'all' && !ids.includes(S.queueFilter)) S.queueFilter = 'all';
+  const count = (id) => Object.values(S.queue).filter((i) => i.channelId === id && i.status !== 'scheduled').length;
+  const chip = (id, label, img) => h('button', {
+    class: 'chip', type: 'button', 'aria-pressed': String(S.queueFilter === id),
+    onclick: () => { S.queueFilter = id; renderQueue(); },
+  }, img ? h('img', { src: img, alt: '', referrerpolicy: 'no-referrer' }) : null, label, id !== 'all' && count(id) ? h('span', { class: 'n' }, count(id)) : null);
+  return h('div', { class: 'chips filter' }, chip('all', 'Все'),
+    ids.map((id) => { const c = channelById(id); return chip(id, c?.handle || c?.title || 'канал', c?.avatar); }));
+}
+
 function renderQueue() {
   const s = S.settings;
-  const items = Object.values(S.queue).sort((a, b) => (ORDER[a.status] ?? 5) - (ORDER[b.status] ?? 5) || (a.sendAt || 0) - (b.sendAt || 0) || b.createdAt - a.createdAt);
+  const ready = enabledChannels().length > 0;
+  const items = visibleItems();
   const frag = [];
-  if (!s.channel || !modelReady(s)) frag.push(onboarding());
+  if (!ready || !modelReady(s)) frag.push(onboarding());
+  const filter = queueFilter();
+  if (filter) frag.push(filter);
   if (!items.length) {
-    if (s.channel && modelReady(s)) {
+    if (ready && modelReady(s)) {
       frag.push(h('div', { class: 'empty' },
         h('b', {}, 'Новых комментариев нет'),
         S.status.lastCheck ? `Последняя проверка в ${hhmm(S.status.lastCheck)}${S.status.filtered ? `, отфильтровано: ${S.status.filtered}` : ''}.` : 'Нажмите «Проверить», чтобы найти комментарии без ответа.'));
@@ -149,10 +174,12 @@ function onboarding() {
   return h('div', {},
     h('p', { class: 'section-title' }, 'Три шага до первого ответа'),
     h('ol', { class: 'steps' },
-      h('li', { class: s.channel ? 'done' : '' },
-        h('b', {}, s.channel ? `Канал: ${s.channel.handle || s.channel.title}` : 'Войдите в YouTube'),
-        h('p', {}, 'Ответы публикуются от аккаунта, в который вы вошли на youtube.com. Ключи API YouTube не нужны.'),
-        h('button', { class: 'btn', type: 'button', onclick: (e) => connectChannel(e.currentTarget) }, 'Подключить канал')),
+      h('li', { class: enabledChannels().length ? 'done' : '' },
+        h('b', {}, enabledChannels().length ? `Каналы: ${enabledChannels().map((c) => c.handle || c.title).join(', ')}` : 'Подключите каналы'),
+        h('p', {}, s.channels.length
+          ? 'Каналы найдены — включите те, на комментарии которых нужно отвечать.'
+          : 'Войдите на youtube.com: расширение найдёт все ваши каналы, включая brand-аккаунты. Ключи API YouTube не нужны.'),
+        h('button', { class: 'btn', type: 'button', onclick: (e) => (s.channels.length ? go('channels') : discover(e.currentTarget)) }, s.channels.length ? 'Выбрать каналы' : 'Найти мои каналы')),
       h('li', { class: modelReady(s) ? 'done' : '' },
         h('b', {}, modelReady(s) ? `Модель: ${s.ai.model}` : 'Подключите модель'),
         h('p', {}, 'OpenAI, Claude, Gemini, OpenRouter, локальная Ollama — любая на выбор.'),
@@ -194,7 +221,8 @@ function card(it) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => cmd('saveDraft', { id: it.id, text: ta.value }).catch(() => {}), 600);
   });
-  reply.append(ta, h('div', { class: 'reply-foot' }, h('span', {}, 'Ответ от вашего имени'), counter));
+  const ch = channelById(it.channelId);
+  reply.append(ta, h('div', { class: 'reply-foot' }, h('span', {}, ch ? `Ответ от ${ch.handle || ch.title}` : 'Ответ от вашего имени'), counter));
   el.append(reply);
 
   if (it.suggestSkip) el.append(h('div', { class: 'note' }, `Модель советует пропустить: ${it.reason}`));
@@ -237,8 +265,9 @@ const sig = (it) => JSON.stringify([it.status, it.error, it.sendAt, it.suggestSk
 
 function patchQueue() {
   const box = $('#cards');
-  const items = Object.values(S.queue);
-  if (!box || !items.length || box.children.length !== items.length || items.some((i) => !box.querySelector(`[data-id="${CSS.escape(i.id)}"]`))) {
+  const items = visibleItems();
+  const filterShown = !!view.querySelector('.filter');
+  if (!box || !items.length || box.children.length !== items.length || filterShown !== queueChannels().length > 1 || items.some((i) => !box.querySelector(`[data-id="${CSS.escape(i.id)}"]`))) {
     // состав очереди изменился — перерисовываем, если пользователь не печатает
     if (view.contains(document.activeElement) && document.activeElement.matches('textarea, input')) return;
     return renderQueue();
@@ -253,11 +282,52 @@ function patchQueue() {
   }
 }
 
-async function connectChannel(btn) {
-  await busy(btn, 'Подключаю…', async () => {
-    const me = await cmd('whoAmI');
-    toast(`Подключено: ${me.handle || me.title}`);
+async function discover(btn) {
+  await busy(btn, 'Ищу каналы…', async () => {
+    const list = await cmd('discoverChannels');
+    const live = list.filter((c) => !c.lost).length;
+    toast(`Найдено: ${live} ${plural(live, ['канал', 'канала', 'каналов'])}`);
+    go('channels');
   });
+}
+
+// ---------- вкладка «Каналы» ----------
+function renderChannels() {
+  const s = S.settings;
+  view.replaceChildren(
+    h('p', { class: 'hint', style: 'margin:2px 0 10px' },
+      'Все каналы, в которые вы вошли на youtube.com в этом браузере: основные и brand-аккаунты. Отвечаю только от включённых, у каждого свой дневной лимит.'),
+    h('div', { class: 'row', style: 'margin-bottom:14px' },
+      h('button', { class: 'btn btn-ink', type: 'button', onclick: (e) => discover(e.currentTarget) }, s.channels.length ? 'Обновить список' : 'Найти мои каналы')),
+    s.channels.length
+      ? h('div', {}, s.channels.map(channelRow))
+      : h('div', { class: 'empty' }, h('b', {}, 'Каналов пока нет'),
+        'Войдите на youtube.com и нажмите «Найти мои каналы». Каналы другого Google-аккаунта появятся, если войти в него на YouTube: аватар → «Сменить аккаунт» → «Добавить аккаунт».'));
+}
+
+function channelRow(c) {
+  const sent = S.stats.byChannel?.[c.id] || 0;
+  const v = { persona: c.persona || '', examples: c.examples || '', signature: c.signature || '' };
+  const own = !!(v.persona.trim() || v.examples.trim() || v.signature.trim());
+  const voice = h('details', { class: 'chan-voice' },
+    h('summary', {}, own ? 'Голос канала: свой' : 'Голос канала: общий'),
+    field('О канале', h('textarea', { class: 'textarea', rows: 3, value: v.persona, placeholder: 'Тема этого канала и манера общения. Пусто — берётся с вкладки «Голос»', oninput: (e) => { v.persona = e.target.value; } })),
+    field('Примеры ответов', h('textarea', { class: 'textarea', rows: 3, value: v.examples, placeholder: '3–5 настоящих ответов с этого канала, каждый с новой строки', oninput: (e) => { v.examples = e.target.value; } })),
+    field('Подпись', h('input', { class: 'input', value: v.signature, placeholder: 'Например: — команда канала', oninput: (e) => { v.signature = e.target.value; } })),
+    h('button', { class: 'btn', type: 'button', onclick: (e) => busy(e.currentTarget, 'Сохраняю…', async () => { await cmd('updateChannel', { id: c.id, patch: v }); toast('Голос канала сохранён'); }) }, 'Сохранить голос'));
+  const meta = [c.handle, c.pageId ? 'brand-аккаунт' : 'основной канал', `Google-аккаунт ${(c.authUser ?? 0) + 1}`, c.lost ? 'нет доступа' : ''].filter(Boolean).join(' · ');
+  return h('div', { class: 'chan' + (c.enabled ? ' on' : '') + (c.lost ? ' lost' : ''), 'data-id': c.id },
+    h('div', { class: 'chan-top' },
+      c.avatar ? h('img', { class: 'avatar', src: c.avatar, alt: '', referrerpolicy: 'no-referrer' }) : h('span', { class: 'avatar' }),
+      h('div', { class: 'who' }, h('b', {}, c.title || c.handle), h('span', { class: 'meta' }, meta)),
+      h('label', { class: 'switch', title: c.enabled ? 'Отвечать от этого канала: да' : 'Отвечать от этого канала: нет' },
+        h('input', {
+          type: 'checkbox', role: 'switch', checked: c.enabled, disabled: c.lost, 'aria-label': `Отвечать от ${c.handle || c.title}`,
+          onchange: (e) => cmd('updateChannel', { id: c.id, patch: { enabled: e.target.checked } }).catch((err) => toast(err.message, true)),
+        }),
+        h('span', { class: 'switch-track' }))),
+    h('div', { class: 'chan-stats' }, `Сегодня отвечено: ${sent} из ${S.settings.schedule.dailyLimit}`),
+    voice);
 }
 
 // ---------- вкладка «Журнал» ----------
@@ -274,6 +344,7 @@ function renderLog() {
         h('div', { class: 'log-top' },
           h('span', { class: 'tag tag-' + l.status }, l.status === 'sent' ? 'Отправлено' : 'Пропущено'),
           h('b', {}, l.author),
+          channelById(l.channelId) && S.settings.channels.length > 1 ? h('span', { class: 'hint' }, '→ ' + (channelById(l.channelId).handle || channelById(l.channelId).title)) : null,
           h('time', {}, new Date(l.doneAt).toLocaleString('ru', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))),
         h('p', { class: 'log-comment' }, l.text),
         l.status === 'sent'
@@ -301,6 +372,7 @@ function renderVoice() {
   const preview = h('div', { class: 'preview', hidden: true });
   const save = async () => { await cmd('saveSettings', { patch: { voice: v } }); toast('Голос сохранён'); };
   view.replaceChildren(
+    S.settings.channels.length > 1 ? h('p', { class: 'hint', style: 'margin:2px 0 4px' }, 'Общие настройки для всех каналов. Тему, примеры и подпись отдельного канала можно задать на вкладке «Каналы».') : null,
     h('p', { class: 'section-title' }, 'Кто отвечает'),
     field('О канале и о вас', h('textarea', { class: 'textarea', rows: 5, value: v.persona, placeholder: 'Например: канал про сборку ПК и железо. Меня зовут Артём, общаюсь со зрителями на «ты», люблю пошутить, но по делу. Новичкам советую смотреть плейлист «Сборки до 60 000».', oninput: (e) => { v.persona = e.target.value; } }),
       'Тема канала, ваше имя, как вы обращаетесь к зрителям, что часто советуете.'),
@@ -375,7 +447,33 @@ function renderModel() {
   const modelInput = h('input', { class: 'input grow', value: ai.model, list: 'models', placeholder: 'название модели', oninput: (e) => { ai.model = e.target.value.trim(); } });
   const keyInput = h('input', { class: 'input grow', type: 'password', value: ai.apiKey, autocomplete: 'off', spellcheck: 'false', placeholder: p().local ? 'не нужен' : 'sk-…', oninput: (e) => { ai.apiKey = e.target.value.trim(); } });
   const keyLink = h('a', { target: '_blank' });
+  const keyLabel = h('span', {}, 'API-ключ');
   const localHint = h('small', {});
+  const bridgeStatus = h('div', { class: 'note', hidden: true });
+  const viaRow = h('label', { class: 'check' },
+    h('input', { type: 'checkbox', checked: ai.viaBridge, onchange: (e) => { ai.viaBridge = e.target.checked; syncProvider(); } }),
+    h('span', {},
+      h('b', {}, 'Через мост TubeComment'),
+      h('small', {}, 'Запросы к провайдеру идут через мост на этом компьютере и дальше через его прокси (HTTP или SOCKS5). Нужно, если API провайдера недоступен напрямую.')));
+  let pingSeq = 0;
+  const checkBridge = async () => {
+    const usesBridge = p().bridge || ai.viaBridge;
+    bridgeStatus.hidden = !usesBridge;
+    if (!usesBridge) return;
+    const seq = ++pingSeq;
+    bridgeStatus.className = 'note';
+    bridgeStatus.textContent = 'Проверяю мост…';
+    try {
+      const r = await cmd('bridgePing');
+      if (seq !== pingSeq) return;
+      const clis = (r.clis || []).map((c) => c.id).join(', ');
+      bridgeStatus.textContent = `Мост ${r.version} работает · CLI: ${clis || 'не найдены'} · прокси: ${r.proxy || 'нет'}`;
+    } catch {
+      if (seq !== pingSeq) return;
+      bridgeStatus.className = 'note note-error';
+      bridgeStatus.textContent = 'Мост не запущен. Откройте папку расширения и запустите bridge/start-bridge.bat (macOS/Linux: node bridge/tubecomment-bridge.mjs).';
+    }
+  };
   const formatSelect = h('select', { class: 'select', onchange: (e) => { ai.format = e.target.value; } },
     h('option', { value: 'openai' }, 'OpenAI-совместимый'), h('option', { value: 'anthropic' }, 'Anthropic Messages'));
 
@@ -383,16 +481,25 @@ function renderModel() {
     const pr = p();
     keyLink.hidden = !pr.keyUrl;
     if (pr.keyUrl) { keyLink.href = pr.keyUrl; keyLink.textContent = 'Где взять ключ'; }
-    localHint.textContent = pr.id === 'ollama'
+    viaRow.hidden = !!pr.bridge || !!pr.local;
+    // CLI-агенту через мост ключ не нужен — оставляем только подсказку
+    keyInput.parentElement.hidden = !!pr.bridge;
+    keyLabel.textContent = pr.bridge ? 'Как это работает' : 'API-ключ';
+    if (pr.bridge) ai.apiKey = '';
+    if (viaRow.hidden) ai.viaBridge = false;
+    localHint.textContent = pr.bridge
+      ? 'Ключ не нужен: отвечает CLI, в который вы уже вошли. Модель — имя CLI: claude, codex, gemini, ollama/llama3.1; можно уточнить, например claude:sonnet.'
+      : pr.id === 'ollama'
       ? 'Запустите Ollama с переменной OLLAMA_ORIGINS=chrome-extension://*, иначе она не примет запросы от расширения.'
       : pr.local ? 'В LM Studio включите сервер (Developer → Start server) и CORS.' : 'Ключ хранится только в этом браузере и уходит только выбранному провайдеру.';
     keyInput.placeholder = pr.local ? 'не нужен' : 'sk-…';
     formatSelect.value = ai.format;
+    checkBridge();
   };
 
   const persist = async () => {
     if (!ai.baseUrl) throw new Error('Укажите адрес API');
-    if (!(await ensureHostPermission(ai.baseUrl))) throw new Error('Без доступа к домену модели расширение не сможет отправлять запросы');
+    if (!(await ensureHostPermission(ai.baseUrl, ai.viaBridge))) throw new Error('Без доступа к домену модели расширение не сможет отправлять запросы');
     await cmd('saveSettings', { patch: { ai } });
   };
 
@@ -413,16 +520,18 @@ function renderModel() {
         syncProvider();
       },
     }, PROVIDERS.map((pr) => h('option', { value: pr.id, selected: pr.id === ai.preset }, pr.name)))),
-    h('label', { class: 'field' }, h('span', {}, 'API-ключ'),
+    h('label', { class: 'field' }, keyLabel,
       h('div', { class: 'row' }, keyInput,
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: (e) => { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; e.currentTarget.textContent = keyInput.type === 'password' ? 'Показать' : 'Скрыть'; } }, 'Показать')),
       h('small', {}, localHint, ' ', keyLink)),
+    viaRow,
+    bridgeStatus,
     h('label', { class: 'field' }, h('span', {}, 'Модель'),
       h('div', { class: 'row' }, modelInput, list,
         h('button', {
           class: 'btn', type: 'button',
           onclick: (e) => busy(e.currentTarget, 'Загружаю…', async () => {
-            if (!(await ensureHostPermission(ai.baseUrl))) throw new Error('Нужен доступ к домену модели');
+            if (!(await ensureHostPermission(ai.baseUrl, ai.viaBridge))) throw new Error('Нужен доступ к домену модели');
             const models = await cmd('listModels', { cfg: ai });
             list.replaceChildren(...models.map((m) => h('option', { value: m })));
             toast(`Моделей доступно: ${models.length}. Начните вводить название`);
@@ -448,7 +557,7 @@ function renderModel() {
 }
 
 // ---------- навигация ----------
-const VIEWS = { queue: renderQueue, log: renderLog, voice: renderVoice, rules: renderRules, model: renderModel };
+const VIEWS = { queue: renderQueue, channels: renderChannels, log: renderLog, voice: renderVoice, rules: renderRules, model: renderModel };
 
 function go(tab) {
   S.tab = tab;
@@ -480,7 +589,7 @@ $('#check').addEventListener('click', (e) => {
   });
 });
 
-$('#account').addEventListener('click', (e) => connectChannel(e.currentTarget));
+$('#account').addEventListener('click', () => go('channels'));
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
@@ -488,6 +597,8 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   renderHeader();
   if (S.tab === 'queue' && (changes.queue || changes.status || changes.settings)) patchQueue();
   if (S.tab === 'log' && changes.log) renderLog();
+  // список каналов перерисовываем, только если в нём ничего не редактируют
+  if (S.tab === 'channels' && (changes.settings || changes.stats) && !view.querySelector('details[open]')) renderChannels();
 });
 
 // LCD-строка показывает «через N мин» — обновляем раз в 30 секунд

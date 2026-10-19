@@ -1,8 +1,7 @@
 // Фоновый service worker: расписание проверок, автоотправка и обработка команд из панели и со страниц YouTube.
 import * as store from './lib/storage.js';
 import * as engine from './lib/engine.js';
-import * as yt from './lib/youtube.js';
-import { listModels } from './lib/ai.js';
+import { listModels, bridgePing } from './lib/ai.js';
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -60,9 +59,12 @@ const handlers = {
     return s;
   },
   // Кнопка ✦ на youtube.com: черновик для конкретного комментария, без очереди
-  async compose({ comment, author, videoTitle, parentText }) {
+  // channelHandle — автор видео со страницы, чтобы ответить голосом нужного канала
+  async compose({ comment, author, videoTitle, parentText, channelHandle }) {
     const settings = await store.getSettings();
-    const r = await engine.compose(settings, { text: comment, author, videoTitle, parentText }, { allowSkip: false });
+    const h = String(channelHandle || '').toLowerCase();
+    const channel = settings.channels.find((c) => h && c.handle?.toLowerCase() === h) || null;
+    const r = await engine.compose(settings, { text: comment, author, videoTitle, parentText }, { allowSkip: false, channel });
     return r.reply;
   },
   async testModel() {
@@ -77,10 +79,18 @@ const handlers = {
   async listModels({ cfg }) {
     return listModels(cfg);
   },
-  async whoAmI() {
-    const me = await yt.withYouTube((call) => yt.whoAmI(call));
-    await store.saveSettings({ channel: me });
-    return me;
+  async bridgePing() {
+    return bridgePing();
+  },
+  async discoverChannels() {
+    return engine.discoverChannels();
+  },
+  // включить/выключить канал, задать ему голос
+  async updateChannel({ id, patch }) {
+    const s = await store.getSettings();
+    const allowed = ['enabled', 'persona', 'examples', 'signature'];
+    const clean = Object.fromEntries(Object.entries(patch || {}).filter(([k]) => allowed.includes(k)));
+    return store.saveSettings({ channels: s.channels.map((c) => (c.id === id ? { ...c, ...clean } : c)) });
   },
   async clearLog() {
     await chrome.storage.local.set({ log: [] });

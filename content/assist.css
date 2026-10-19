@@ -1,0 +1,14 @@
+.tc-ai-btn {
+  margin-right: auto;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--yt-spec-10-percent-layer, rgba(0, 0, 0, 0.1));
+  border-radius: 18px;
+  background: transparent;
+  color: var(--yt-spec-text-primary, #0f0f0f);
+  font: 500 14px/36px 'Roboto', 'Arial', sans-serif;
+  cursor: pointer;
+}
+.tc-ai-btn:hover { background: var(--yt-spec-badge-chip-background, rgba(0, 0, 0, 0.05)); }
+.tc-ai-btn:disabled { opacity: 0.6; cursor: progress; }
+.tc-ai-btn.tc-error { color: #e5322d; border-color: currentColor; }

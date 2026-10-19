@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TubeComment</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="machine">
+    <div class="machine-top">
+      <span class="led" id="led" aria-hidden="true"></span>
+      <span class="brand">TubeComment</span>
+      <button class="account" id="account" type="button" title="Канал, от имени которого идут ответы">
+        <img id="account-avatar" alt="" hidden>
+        <span id="account-name">Канал не подключён</span>
+      </button>
+    </div>
+
+    <div class="lcd" role="status" aria-live="polite">
+      <div class="lcd-cell">
+        <span class="seg" data-ghost="88" id="lcd-waiting">00</span>
+        <span class="lcd-label">ждут</span>
+      </div>
+      <div class="lcd-cell">
+        <span class="seg" data-ghost="88" id="lcd-sent">00</span>
+        <span class="lcd-label" id="lcd-sent-label">отвечено сегодня</span>
+      </div>
+      <div class="lcd-cell lcd-cell-end">
+        <span class="seg" data-ghost="88:88" id="lcd-time">--:--</span>
+        <span class="lcd-label">проверка</span>
+      </div>
+      <p class="lcd-line" id="lcd-line">Готов к работе</p>
+    </div>
+
+    <div class="controls">
+      <div class="mode" role="radiogroup" aria-label="Режим работы" id="mode">
+        <button role="radio" data-mode="off" type="button">Выкл</button>
+        <button role="radio" data-mode="drafts" type="button">Черновики</button>
+        <button role="radio" data-mode="auto" type="button">Авто</button>
+        <span class="mode-thumb" aria-hidden="true"></span>
+      </div>
+      <button class="btn btn-ink" id="check" type="button">Проверить</button>
+    </div>
+    <p class="mode-note" id="mode-note"></p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="queue" type="button">Очередь <span class="count" id="tab-count"></span></button>
+    <button role="tab" data-tab="log" type="button">Журнал</button>
+    <button role="tab" data-tab="voice" type="button">Голос</button>
+    <button role="tab" data-tab="rules" type="button">Правила</button>
+    <button role="tab" data-tab="model" type="button">Модель</button>
+  </nav>
+
+  <main id="view"></main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

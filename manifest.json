@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "TubeComment — AI-автоответчик для комментариев YouTube",
+  "short_name": "TubeComment",
+  "version": "0.1.0",
+  "description": "Open-source автоответчик на комментарии вашего YouTube-канала. Работает без API YouTube, через вашу сессию на сайте. Подключается любая модель: OpenAI, Claude, Gemini, OpenRouter, Ollama и другие.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "TubeComment",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "panel/panel.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/assist.js"],
+      "css": ["content/assist.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
